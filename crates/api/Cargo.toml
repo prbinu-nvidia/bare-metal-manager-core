@@ -91,6 +91,7 @@ hyper-timeout = { workspace = true }
 hyper-util = { workspace = true }
 ipnetwork = { workspace = true, features = ["serde"] }
 itertools = { workspace = true }
+jsonwebtoken = { features = ["rust_crypto"], workspace = true }
 lazy_static = { workspace = true }
 libredfish = { workspace = true }
 librms = { workspace = true }
@@ -174,6 +175,8 @@ x509-parser = { features = ["verify"], workspace = true }
 [features]
 default = ["linux-build"]
 linux-build = ["tss-esapi"]
+# Expose SignMachineIdentity gRPC (off by default; enable when ready)
+machine-identity-api = []
 
 [build-dependencies]
 carbide-version = { path = "../version" }
