@@ -119,6 +119,7 @@ pub(crate) async fn sign_machine_identity(
     _api: &Api,
     request: Request<rpc::MachineIdentityRequest>,
 ) -> Result<Response<MachineIdentityResponse>, Status> {
+    std::future::ready(()).await; // dummy await to satisfy clippy (function not complete yet)
     log_request_data(&request);
 
     // Extract machine_id from the client certificate's SPIFFE ID
@@ -147,7 +148,7 @@ pub(crate) async fn sign_machine_identity(
     // 3. Decrypt the signing key using the master key from Vault KV
     // 4. Generate JWT-SVID with SPIFFE ID (spiffe://<trust-domain>/machine/<machine-id>)
     // 5. Sign the JWT with the tenant's private key
-    // 6. Optionally call LL Exchange Token Service for token exchange
+    // 6. Optionally call Exchange Token Service for token exchange
 
     // Placeholder response - to be replaced with actual implementation
     let response = MachineIdentityResponse {
