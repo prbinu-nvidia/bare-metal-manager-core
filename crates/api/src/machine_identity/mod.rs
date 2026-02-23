@@ -16,13 +16,8 @@
 #![allow(dead_code)] // Signer, Es256Signer, SignOptions used from tests and from handler once key loading is implemented
 use std::collections::BTreeMap;
 
-use ::rpc::forge::{self as rpc, MachineIdentityResponse};
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde_json::Value;
-use tonic::{Request, Response, Status};
-
-use crate::api::{Api, log_request_data};
-use crate::auth::AuthContext;
 
 /// Error type for JWT-SVID signing.
 #[derive(Debug, thiserror::Error)]
@@ -97,68 +92,6 @@ impl Signer for Es256Signer {
 pub fn sign(payload: &Value, key: &[u8]) -> Result<String, SignError> {
     let signer = Es256Signer::new(key, "default")?;
     signer.sign(payload, &SignOptions::default())
-}
-
-/// Signs a JWT-SVID token for machine identity.
-///
-/// This handler validates the machine identity request, generates a signed JWT-SVID
-/// token containing the machine's SPIFFE ID, and returns the token along with
-/// metadata about its validity and type.
-///
-/// # Authentication
-/// The machine_id is extracted from the client's mTLS certificate SPIFFE ID
-/// (embedded in the Subject Alternative Name URI extension).
-///
-/// # Arguments
-/// * `api` - Reference to the API context
-/// * `request` - The gRPC request containing audience list
-///
-/// # Returns
-/// * `MachineIdentityResponse` containing the signed access token and metadata
-pub(crate) async fn sign_machine_identity(
-    _api: &Api,
-    request: Request<rpc::MachineIdentityRequest>,
-) -> Result<Response<MachineIdentityResponse>, Status> {
-    std::future::ready(()).await; // dummy await to satisfy clippy (function not complete yet)
-    log_request_data(&request);
-
-    // Extract machine_id from the client certificate's SPIFFE ID
-    let auth_context = request
-        .extensions()
-        .get::<AuthContext>()
-        .ok_or_else(|| Status::unauthenticated("No authentication context found"))?;
-
-    let machine_id_str = auth_context
-        .get_spiffe_machine_id()
-        .ok_or_else(|| Status::unauthenticated("No machine identity in client certificate"))?;
-
-    tracing::info!(machine_id = %machine_id_str, "Processing machine identity request");
-
-    // Parse the machine_id string into a MachineId (will be used for JWT SPIFFE ID generation)
-    let _machine_id: carbide_uuid::machine::MachineId = machine_id_str
-        .parse()
-        .map_err(|e| Status::invalid_argument(format!("Invalid machine ID format: {}", e)))?;
-
-    let req = request.get_ref();
-    let _audience = &req.audience; // TODO: Use audience in JWT claims
-
-    // TODO: Implement the full JWT-SVID signing flow:
-    // 1. Validate the machine exists and is authorized
-    // 2. Retrieve the tenant's encrypted signing key from the database
-    // 3. Decrypt the signing key using the master key from Vault KV
-    // 4. Generate JWT-SVID with SPIFFE ID (spiffe://<trust-domain>/machine/<machine-id>)
-    // 5. Sign the JWT with the tenant's private key
-    // 6. Optionally call Exchange Token Service for token exchange
-
-    // Placeholder response - to be replaced with actual implementation
-    let response = MachineIdentityResponse {
-        access_token: String::new(), // TODO: Generate actual JWT-SVID
-        issued_token_type: "urn:ietf:params:oauth:token-type:jwt".to_string(),
-        token_type: "Bearer".to_string(),
-        expires_in: "3600".to_string(), // 1 hour default
-    };
-
-    Ok(Response::new(response))
 }
 
 #[cfg(test)]

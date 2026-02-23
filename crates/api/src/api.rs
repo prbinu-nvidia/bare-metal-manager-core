@@ -2672,7 +2672,7 @@ impl Forge for Api {
         request: tonic::Request<rpc::MachineIdentityRequest>,
     ) -> Result<Response<rpc::MachineIdentityResponse>, Status> {
         #[cfg(feature = "machine-identity-api")]
-        return crate::machine_identity::sign_machine_identity(self, request).await;
+        return crate::handlers::machine_identity::sign_machine_identity(self, request).await;
         #[cfg(not(feature = "machine-identity-api"))]
         let _ = request;
         #[cfg(not(feature = "machine-identity-api"))]
