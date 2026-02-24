@@ -29,7 +29,7 @@ use crate::auth::AuthContext;
 ///
 /// The machine_id is taken from the client's mTLS certificate SPIFFE ID.
 /// Actual signing and key loading are implemented in `crate::machine_identity`.
-#[allow(dead_code)]
+#[allow(dead_code, clippy::unused_async)]
 pub(crate) async fn sign_machine_identity(
     _api: &Api,
     request: Request<rpc::MachineIdentityRequest>,
