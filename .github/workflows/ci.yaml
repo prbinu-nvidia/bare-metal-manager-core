@@ -829,21 +829,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-
       - name: Validate Helm chart
-        run: |
-          set -euo pipefail
-          helm dependency build helm
-          helm lint helm
-          helm template carbide ./helm >/dev/null
-
-      - name: Display Helm validation summary
-        run: |
-          echo "  Helm chart validation completed"
-          echo "  Chart path: helm/"
-          echo "  Chart version (CI): ${{ needs.prepare.outputs.helm_version }}"
+        uses: NVIDIA/dsx-github-actions/.github/actions/helm-validate@94bde998f5d7965576b0c663db7d5d709c918167
+        with:
+          chart-path: helm
+          lint: 'true'
+          template: 'true'
 
   build-push-helm-chart:
     needs:
@@ -855,39 +846,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-
-      - name: Configure NGC Helm repository
-        env:
-          NGC_API_KEY: ${{ secrets.NVCR_TOKEN }}
-        run: |
-          set -euo pipefail
-          helm repo add ngc-carbide https://helm.ngc.nvidia.com/0837451325059433/carbide-dev --username='$oauthtoken' --password="${NGC_API_KEY}"
-          helm repo update
-
-      - name: Install Helm push plugin
-        run: |
-          set -euo pipefail
-          helm plugin install https://github.com/chartmuseum/helm-push
-
       - name: Package and push Helm chart to NGC
-        env:
-          HELM_VERSION: ${{ needs.prepare.outputs.helm_version }}
-          APP_VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          helm dependency build helm
-          helm package helm --destination dist --version "${HELM_VERSION}" --app-version "${APP_VERSION}"
-          CHART_PACKAGE="dist/carbide-${HELM_VERSION}.tgz"
-          helm cm-push "${CHART_PACKAGE}" ngc-carbide
-
-      - name: Display Helm push summary
-        run: |
-          echo "  Helm chart pushed successfully"
-          echo "  Repository: https://helm.ngc.nvidia.com/0837451325059433/carbide-dev"
-          echo "  Chart: carbide:${{ needs.prepare.outputs.helm_version }}"
+        uses: NVIDIA/dsx-github-actions/.github/actions/helm-package-push@94bde998f5d7965576b0c663db7d5d709c918167
+        with:
+          chart-path: helm
+          chart-version: ${{ needs.prepare.outputs.helm_version }}
+          app-version: ${{ needs.prepare.outputs.version }}
+          lint: 'false'
+          ngc-key: ${{ secrets.NVCR_TOKEN }}
+          ngc-path: 0837451325059433/carbide-dev
+          ngc-duplicate: fail
 
 
   # ============================================================================
