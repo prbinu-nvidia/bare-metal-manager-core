@@ -11,11 +11,13 @@
 
 # **1\. Introduction**
 
-This document serves as the Software Design Document (SDD) for machine identity. It details the high-level and low-level design choices, architecture, and implementation details necessary for the development.
+This design document specifies how the Bare Metal Manager project will integrate the SPIFFE identity framework to issue and manage machine identities using SPIFFE Verifiable Identity Documents (SVIDs). SPIFFE provides a vendor-agnostic standard for service identity that enables cryptographically verifiable identities for workloads, removing reliance on static credentials and supporting zero-trust authentication across distributed systems.
+
+The document outlines the architecture, data models, APIs, security considerations, and interactions between Bare Metal Manager components and SPIFFE-compliant systems.
 
 ## **1.1 Purpose**
 
-The purpose of this document is to articulate the design of the software system, ensuring all stakeholders have a shared understanding of the solution, its components, and their interactions.
+The purpose of this document is to articulate the design of the software system, ensuring all stakeholders have a shared understanding of the solution, its components, and their interactions. It details the high-level and low-level design choices, architecture, and implementation details necessary for the development.
 
 ## **1.2 Definitions and Acronyms**
 
@@ -38,6 +40,7 @@ The purpose of this document is to articulate the design of the software system,
 | JWKS | A JSON Web Key ([JWK](https://datatracker.ietf.org/doc/html/rfc7517)) is a JavaScript Object Notation (JSON) data structure that represents a cryptographic key.  JSON Web Key Set (JWKS) defines a JSON data structure that represents a set of JWKs. |
 | IMDS | Instance Meta-data Service |
 | BM | A bare metal machine \- often referred as a machine or node in this document.  |
+| Token Exchange Server | A service capable of validating security tokens provided to it and issuing new security tokens in response, which enables clients to obtain appropriate access credentials for resources in heterogeneous environments or across security domains. Defined in [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693). This document also refer this as 'token endpoints' and 'token delegation server'  |
 
 ## **1.3 Scope**
 
@@ -45,7 +48,7 @@ This SDD covers the design for Carbide issuing SPIFFE compliant JWTs to nodes it
 
 ### **1.3.1​ Assumptions, Constraints, Dependencies**
 
-* Must implement SPIFFE SVIDs as Carbide node identity  
+* Must implement SPIFFE SVIDs as Carbide node identity
 * Must rotate and expire SVIDs  
 * Must provide configurable audience in SVIDs  
 * Must enable delegating node identity signing  
@@ -63,12 +66,12 @@ From a high level, the goal for Carbide is to issue a JWT-SVID identity to the r
 *Figure-1 High-level architecture and flow diagram*
 
 1. The bare metal (BM) tenant process makes HTTP requests to the Carbide meta-data service (IMDS) over a link-local address(169.254.169.254). IMDS is running inside the DPU as part of the Carbide DPU agent.   
-2. IMDS in turn makes an mTLS authenticated request to the Carbide site controller gRPC server to sign a SPIFFE compliant node identity token (JWT-SVID). The gRPC server pulls the node’s organization\_id (tenant id), signing keys (encrypted) from the database.  
-   1. Pull keys and metadata from the database, decrypt private key and sign JWT-SVID. The token is returned to Host’s tenant process (implicit, not shown in the diagram).  
+2. IMDS in turn makes an mTLS authenticated request to the Carbide site controller gRPC server to sign a SPIFFE compliant node identity token (JWT-SVID).  
+   a. Pull keys and machine and org metadata from the database, decrypt private key and sign JWT-SVID. The token is returned to Host’s tenant process (implicit, not shown in the diagram).
 3. The tenant process subsequently makes a request to a service (say OpenBao/Vault) with the JWT-SVID token passed in the authentication header.  
-   1. The server-x using the prefetched public keys from Carbide will validate JWT-SVID
+   a. The server-x using the prefetched public keys from Carbide will validate JWT-SVID
 
-An additional requirement for Carbide is to delegate the issuance of a JWT-SVID to an external system. The solution is to offer a callback API for Carbide tenants to intercept the signing request, validate the Carbide node identity, and issue new tenant specific JWT-SVID token. 
+An additional requirement for Carbide is to delegate the issuance of a JWT-SVID to an external system. The solution is to offer a callback API for Carbide tenants to intercept the signing request, validate the Carbide node identity, and issue new tenant specific JWT-SVID token (Figure-2). The delegation model offers tenants flexibility to customize their machine SVIDs.
 
 ![](carbide-spiffe-svid-token-exchange-flow.svg)
 
@@ -90,9 +93,9 @@ The system is composed of the following major components:
 
 There are three different flows associated with implementing this feature:
 
-1. Per-tenant signing key provisioning: Describes how a new signing key associated with a tenant is provisioned, and optionally the token delegation/exchange flows.  
-2. SPIFFE key bundle discovery: Discuss about how the signing public keys are distributed to interested parties (verifiers)  
-3. JWT-SVID node identity request flow: The run time flow used by tenant applications to fetch JWT-SVIDs from Carbide.
+1. *Per-tenant signing key provisioning*: Describes how a new signing key associated with a tenant is provisioned, and optionally the token delegation/exchange flows.  
+2. *SPIFFE key bundle discovery*: Discuss about how the signing public keys are distributed to interested parties (verifiers)  
+3. *JWT-SVID node identity request flow*: The run time flow used by tenant applications to fetch JWT-SVIDs from Carbide.
 
 Each of these flows are discussed below.
 
@@ -128,7 +131,7 @@ CreateTenantRequest (called by admin)
 
 ## **3.2 Per-tenant SPIFFE Key Bundle Discovery**
 
-[SPIFFE bundles](https://spiffe.io/docs/latest/spiffe-specs/spiffe_trust_domain_and_bundle/#4-spiffe-bundle-format) are represented as an [RFC 7517](https://tools.ietf.org/html/rfc7517) compliant JWK Set. Carbide exposes the signing public keys through Carbide-rest OIDC discovery/JWKS endpoints. Services that require JWT-SVID verification pull public keys to verify token signature. Review sequence diagrams Figure-4 and 5 for more details.
+[SPIFFE bundles](https://spiffe.io/docs/latest/spiffe-specs/spiffe_trust_domain_and_bundle/#4-spiffe-bundle-format) are represented as an [RFC 7517](https://tools.ietf.org/html/rfc7517) compliant JWK Set. Carbide exposes the signing public keys through Carbide-rest OIDC discovery and JWKS endpoints. Services that require JWT-SVID verification pull public keys to verify token signature. Review sequence diagrams Figure-4 and 5 for more details.
 
 ```
 ┌────────┐       ┌───────────────┐       ┌─────────────┐       ┌──────────┐      
@@ -141,7 +144,7 @@ CreateTenantRequest (called by admin)
     │ openid-configuration│                     │                   │                    
     │──────────────────>│                       │                   │                    
     │                   │                       │                   │                    
-    │                   │ gRPC: GetOidcConfig   │                   │                    
+    │                   │ gRPC: GetOpenIDConfiguration              │ 
     │                   │ (site_id. org_id)     │                   │                    
     │                   │──────────────────────>│                   │                    
     │                   │                       │                   │                    
@@ -159,7 +162,7 @@ CreateTenantRequest (called by admin)
     │                   │                       │ └─────────────────────────────────┘    
     │                   │                       │                   │                    
     │                   │ gRPC Response:        │                   │                    
-    │                   │ OidcConfigResponse    │                   │                    
+    │                   │ OidcConfigResponse    │                   │ 
     │                   │<──────────────────────│                   │                    
     │                   │                       │                   │                    
     │ 200 OK            │                       │                   │                    
@@ -184,7 +187,7 @@ CreateTenantRequest (called by admin)
     │ jwks.json         │                       │                   │                    
     │──────────────────►│                       │                   │                    
     │                   │                       │                   │                    
-    │                   │ GetSVIDJWKS(site_id,  │                   │                    
+    │                   │ GetJWKS(site_id,      │                   │                    
     │                   │         org_id)       │                   │                    
     │                   │ (gRPC)                │                   │                    
     │                   │──────────────────────►│                   │                    
@@ -205,7 +208,7 @@ CreateTenantRequest (called by admin)
     │                   │                       │ │ - Set other key fields          │    
     │                   │                       │ └─────────────────────────────────┘    
     │                   │                       │                   │                    
-    │                   │ GetSVIDJWKSResponse   │                   │                    
+    │                   │ gRPC JWKS Response    │                   │  
     │                   │ {keys: [...]}         │                   │                    
     │                   │◄──────────────────────│                   │                    
     │                   │                       │                   │                    
@@ -278,13 +281,13 @@ A new table will be created to store tenant signing key pairs. The private key w
 | tenant\_identity\_keys |  |  |
 | :---- | :---- | :---- |
 | `VARCHAR(255)` | `tenant_organization_id` | PK |
-| TEXT | `encrypted_signing_key` | Encrypted private key |
+| `TEXT` | `encrypted_signing_key` | Encrypted private key |
 | `VARCHAR(255)` | `signing_key_public` | Public key |
 | `VARCHAR(255)` | `svid_sign_callback_url` | Callback URL |
 | `VARCHAR(255)` | `key_id` | Key identifier (e.g. for JWKS kid) |
 | `VARCHAR(255)` | `algorithm` | Signing algorithm |
 | `VARCHAR(255)` | `master_key_id` | To identify master key used for encrypting signing key |
-| BOOL | `is_active` |  |
+| `BOOLEAN` | `is_active` |  |
 
 ### **3.4.2 Configuration**
 
@@ -327,10 +330,12 @@ The subject format complies with the SPIFFE ID specification.
 
 The Carbide issues two types of JWT-SVIDs. Though they both are similar in structure and signed by the same key, the purpose and some fields are different. 
 
-1. If the exchange token callback is registered, Carbide issues a JWT-SVID node identity with `aud` set to “tenant-layer”, validity/ttl limited to 120 seconds and pass additional request parameters using `request-meta-data`. This token is then passed to the callback function (shown in the above example).  
+1. If the token delegation callback is registered, Carbide issues a JWT-SVID node identity with `aud` set to `subject_token_audience`, validity/ttl limited to 120 seconds and pass additional request parameters using `request-meta-data`. This token (see example token above) is then passed to the `token_endpoint` URI. 
 2. If no callback is registered, Carbide issues a JWT-SVID directly to the tenant process in the Carbide managed node. Here the `aud` is set to what is passed as parameters in the IMDS call and ttl is set to 10 minutes (configurable).
 
-**Tenant Layer JWT-SPIFFE:**
+**SPIFFE JWT-SVID Issued by Token Exchange Server:**
+
+This is a sample JWT-SVID issued by the tenant's token endpoint.
 
 ```json
 {
@@ -392,7 +397,9 @@ Content-Length: ...
 eyJhbGciOiJSUzI1NiIs...
 ```
 
-#### **3.5.1.2 Carbide Register Token Exchange Registration APIs**
+#### **3.5.1.2 Carbide Token Exchange Server Registration APIs**
+
+These APIs allow Carbide tenants to register their Token Exchange server endpoints. Delegation gives tenants control over token structure, lifecycle, and management—for example, when tenants have richer context than Carbide about the requesting workload (e.g., VM identity, application role) and need to issue tenant-specific JWT-SVIDs.
 
 ```
 PUT /token-delegation
@@ -411,8 +418,7 @@ PUT https://<carbide-rest>/v2/org/{org-id}/carbide/site/{site-id}/token-delegati
   "auth_method": "client_secret_basic",
   "client_id": "abc123",
   "client_secret": "super-secret"
-  “subject_token_audiences”: “value”, // to include in carbide-jwt-svid 
-
+  “subject_token_audience”: “value”, // to include in carbide-jwt-svid
 }
 ```
 
@@ -425,14 +431,14 @@ Response:
   "auth_method": "client_secret_basic",
   "client_id": "abc123",
   "client_secret": "super-secret"
-  “subject_token_audiences”: “value”, // to include in carbide-jwt-svid 
+  “subject_token_audience”: “value”, // to include in carbide-jwt-svid 
 }
 ```
 
 Possible values for `auth_method`:
 
 * `client_secret_basic` supported  
-* `none` supported. if set, the client_id and client_secret are ignored/not passed
+* `none` supported. if set, the client_id and client_secret are ignored/not passed to exchange endpoint
 * `client_secret_post` currently unsupported  
 * `private_key_jwt` currently unsupported  
 * `mtls` currently unsupported
@@ -467,7 +473,7 @@ Content-Length: ...
  }
 ```
 
-The exchange service serves an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange endpoint for swapping SPIRE issued SVIDs with a tenant specific issuer SVID. Refer [3.3.7 SPIFFE Exchange Service](https://docs.google.com/document/d/17YJ6umSdwz2fEwTE8Zc2MZa1XloETcgYROTTWGyf7Hc/edit?tab=t.0#heading=h.kxco1xct8d4f) for details.
+The exchange service serves an [RFC 8693](https://datatracker.ietf.org/doc/html/rfc8693) token exchange endpoint for swapping SPIRE issued SVIDs with a tenant specific issuer SVID or access token.
 
 #### **3.5.1.4 SPIFFE JWKS Endpoint**
 
