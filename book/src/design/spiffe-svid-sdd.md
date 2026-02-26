@@ -59,6 +59,7 @@ This SDD covers the design for Carbide issuing SPIFFE compliant JWTs to nodes it
 From a high level, the goal for Carbide is to issue a JWT-SVID identity to the requesting nodes under Carbide’s management. A Carbide managed node will be part of a tenant (aka org), and the issued JWT-SVID embodies both tenant and machine identity that complies with the SPIFFE format.
 
 ![](carbide-spiffe-jwt-svid-flow.svg)
+
 *Figure-1 High-level architecture and flow diagram*
 
 1. The bare metal (BM) tenant process makes HTTP requests to the Carbide meta-data service (IMDS) over a link-local address(169.254.169.254). IMDS is running inside the DPU as part of the Carbide DPU agent.   
@@ -70,6 +71,7 @@ From a high level, the goal for Carbide is to issue a JWT-SVID identity to the r
 An additional requirement for Carbide is to delegate the issuance of a JWT-SVID to an external system. The solution is to offer a callback API for Carbide tenants to intercept the signing request, validate the Carbide node identity, and issue new tenant specific JWT-SVID token. 
 
 ![](carbide-spiffe-svid-token-exchange-flow.svg)
+
 *Figure-2 Token exchange delegation flow diagram*
 
 ## **2.2 Component Breakdown**
@@ -332,8 +334,8 @@ The Carbide issues two types of JWT-SVIDs. Though they both are similar in struc
 
 ```json
 {
-  "sub": "spiffe://tenant_nca-id.<sjc-1>.<vmaas_name>.nvidia.com/vm/<instance-uuid>",
-  "iss": "https://<tenant-layer>/v1/org/org-id",
+  "sub": "spiffe://<tenant-domain>/machine/{instance-uuid}",
+  "iss": "https://<tenant-domain>/v1/org/{org-id}/site/{site-id}",
   "aud": [
     "openbao-service"
   ],
@@ -430,7 +432,7 @@ Response:
 Possible values for `auth_method`:
 
 * `client_secret_basic` supported  
-* `none` supported. if set, the client_id and client_secret are ignored/ not passed  
+* `none` supported. if set, the client_id and client_secret are ignored/not passed
 * `client_secret_post` currently unsupported  
 * `private_key_jwt` currently unsupported  
 * `mtls` currently unsupported
@@ -566,13 +568,16 @@ syntax = "proto3";
 
 // Token Delegation config message
 message TokenDelegation {
-  string token_endpoint = 1;
-  string client_id = 2;
-  string client_secret = 3; // write-only, never returned in responses
-  string subject_token_audiences = 4; // audiences to include in Carbide JWT-SVID
-  bool enabled = 5;
-  google.protobuf.Timestamp created_at = 6;
-  google.protobuf.Timestamp updated_at = 7;
+  string org_id = 1;
+  string site_id = 2;
+  string token_endpoint = 3;
+  string auth_method = 4;
+  string client_id = 5;
+  string client_secret = 6; // write-only, never returned in responses
+  string subject_token_audience = 7; // audience to include in Carbide JWT-SVID
+  bool enabled = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
 }
 
 // Request for GET / DELETE (identifies org and site)
@@ -586,10 +591,11 @@ message PutTokenDelegationRequest {
   string org_id = 1;
   string site_id = 2;
   string token_endpoint = 3;
-  string client_id = 4;
-  string client_secret = 5;
-  string subject_token_audiences = 6;
-  bool enabled = 7;
+  string auth_method = 4;
+  string client_id = 5;
+  string client_secret = 6;
+  string subject_token_audience = 7;
+  bool enabled = 8;
 }
 
 // Response for GET / PUT
