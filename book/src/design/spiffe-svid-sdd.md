@@ -99,7 +99,7 @@ There are three different flows associated with implementing this feature:
 
 Each of these flows are discussed below.
 
-## **3.1 Per-tenant Signing Key Provisioning**
+## **3.1 Per-tenant Identity Configuration and Signing Key Provisioning**
 
 Per-org signing keys are created when an admin first configures machine identity for an org via `PUT identity/config` (PutIdentityConfiguration). Key generation is not tied to tenant creation.
 
@@ -134,7 +134,7 @@ PutIdentityConfiguration (PUT identity/config)
 │ 4. Return IdentityConfigResp  │
 └───────────────────────────────┘
 ```
-*Figure-3 Per-tenant signing key provisioning flow* 
+*Figure-3 Per-tenant identity configuration and signing key provisioning flow* 
 
 ## **3.2 Per-tenant SPIFFE Key Bundle Discovery**
 
@@ -250,7 +250,7 @@ This is the core part of this SDD – issuing JWT-SVID based node identity token
       ▼
 [ Carbide API Server ]
       │
-      │ - Validates the request (and attest)
+      │ Validates the request (and attest)
       ▼
 JWT-SVID issued to workload/tenant
 ```
@@ -281,18 +281,22 @@ Carbide Tenant issue JWT-SVID to tenant workload, routed back through Carbide
 ## **3.4 Data Model and Storage**
 
 ### **3.4.1 Database Design**
-A new table will be created to store tenant signing key pairs. The private key will be encrypted with a master key stored in Vault.
+A new table will be created to store tenant signing key pairs and optional token delegation config. The private key will be encrypted with a master key stored in Vault. Token delegation columns are nullable when an org does not use delegation.
 
-| tenant\_identity\_keys |  |  |
+| tenant\_identity\_config |  |  |
 | :---- | :---- | :---- |
 | `VARCHAR(255)` | `tenant_organization_id` | PK |
 | `TEXT` | `encrypted_signing_key` | Encrypted private key |
 | `VARCHAR(255)` | `signing_key_public` | Public key |
-| `VARCHAR(255)` | `svid_sign_callback_url` | Callback URL |
 | `VARCHAR(255)` | `key_id` | Key identifier (e.g. for JWKS kid) |
 | `VARCHAR(255)` | `algorithm` | Signing algorithm |
 | `VARCHAR(255)` | `master_key_id` | To identify master key used for encrypting signing key |
-| `BOOLEAN` | `enabled` |  |
+| `BOOLEAN` | `enabled` | Key signing enabled by default. Set enable=false to disable |
+| `VARCHAR(512)` | `token_endpoint` | Token exchange endpoint URL (optional; from PUT identity/token-delegation) |
+| `VARCHAR(64)` | `auth_method` | e.g. client_secret_basic, none (optional) |
+| `VARCHAR(255)` | `client_id` | OAuth client ID (optional) |
+| `TEXT` | `client_secret` | OAuth client secret, encrypted at rest (optional, write-only) |
+| `VARCHAR(255)` | `subject_token_audience` | Audience to include in Carbide JWT-SVID sent to exchange (optional) |
 
 ### **3.4.2 Configuration**
 
@@ -308,7 +312,9 @@ token_ttl_max = 86400 # max ttl permitted in seconds
 token_delegation_http_proxy = "https://carbide-ext.com" # optional, SSRF mitigation for token exchange
 ```
 
-**Global vs per-org:** Global config provides the master switch (`enabled`), site-wide signing algorithm (`algorithm`), optional token TTL bounds (`token_ttl_min`, `token_ttl_max`), and optional HTTP proxy for token exchange (`token_delegation_http_proxy`). All identity settings (`issuer`, `defaultAudience`, `allowedAudiences`, `tokenTtl`, `subjectDomainPrefix`) are **per-org only** and orgs supply them when calling PUT identity/config. There is no global fallback; orgs must provide these to generate keys and receive tokens. Per-org `enabled` can further disable an org when global is true (default `true` when unset). **PUT prerequisite:** Per-org config can only be created or updated when global `enabled` is `true`; otherwise PUT returns `503 Service Unavailable`.
+**Global vs per-org:** Global config provides the master switch (`enabled`), site-wide signing algorithm (`algorithm`), optional token TTL bounds (`token_ttl_min`, `token_ttl_max`), and optional HTTP proxy for token exchange (`token_delegation_http_proxy`). All identity settings (`issuer`, `defaultAudience`, `allowedAudiences`, `tokenTtl`, `subjectDomainPrefix` etc.) are **per-org only** and orgs supply them when calling PUT identity/config. There is no global fallback; orgs must provide these to generate keys and receive tokens. Per-org `enabled` can further disable an org when global is true (default `true` when unset). 
+
+**PUT prerequisite:** Per-org config can only be created or updated when global `enabled` is `true`; otherwise PUT returns `503 Service Unavailable`.
 
 ### **3.4.3 Incomplete or Invalid Global Config**
 
@@ -424,13 +430,13 @@ Content-Length: ...
 eyJhbGciOiJSUzI1NiIs...
 ```
 
-#### **3.5.1.2 Carbide Identity APIs
+#### **3.5.1.2 Carbide Identity APIs***
 
 ##### **Org Identity Configuration APIs**
 
 These APIs manage per-org identity configuration that controls how Carbide issues JWT-SVIDs for machines in that org. Admins use them to enable or disable the feature per org, and to set the issuer URI, allowed audiences, token TTL, and SPIFFE subject prefix. The configuration applies to all JWT-SVID tokens issued for the org's machines (via IMDS or token exchange). GET retrieves the current config, PUT creates or replaces it, and DELETE removes it (org no longer has machine identity).
 
-**Per-org key generation on PUT:** When PUT creates identity config for an org for the first time, Carbide generates a new per-org signing key pair using the global `algorithm`, encrypts the private key with the Vault master key, and stores it in `tenant_identity_keys`. On subsequent PUTs (updates), the key is not regenerated unless `rotateKey` is `true`. On DELETE, the identity config and the org's signing key are removed (or soft-deleted).
+**Per-org key generation on PUT:** When PUT creates identity config for an org for the first time, Carbide generates a new per-org signing key pair using the global `algorithm`, encrypts the private key with the Vault master key, and stores it in `tenant_identity_keys`. On subsequent PUTs (updates), the key is not regenerated unless `rotateKey` is `true`. On DELETE, the identity config and the org's signing key are removed.
 
 **PUT when global is disabled:** If the global `enabled` setting in site config is `false`, PUT returns `503 Service Unavailable` with a message indicating that machine identity must be enabled at the site level first. This enforces the deployment order: global config must be enabled before per-org config can be created or updated.
 
@@ -809,8 +815,8 @@ service Forge {
 
 | REST Method & Endpoint | gRPC Method | Description |
 | ----- | ----- | ----- |
-| `GET /v2/org/{org-id}/carbide/site/{site-id}/.well-known/jwks.json` | `Forge.GetJWKS` | Fetch JSON Web Key Set |
-| `GET /v2/org/{org-id}/carbide/site/{site-id}/.well-known/openid-configuration` | `Forge.GetOpenIDConfiguration` | Fetch OpenID Connect config |
+| `GET /v2/org/{org-id}/carbide/site/{site-id}/.well-known/jwks.json` | `Forge.GetJWKS` | Fetch JSON Web Key Set (public, unauthenticated) |
+| `GET /v2/org/{org-id}/carbide/site/{site-id}/.well-known/openid-configuration` | `Forge.GetOpenIDConfiguration` | Fetch OpenID Connect config (public, unauthenticated) |
 | `GET /v2/org/{org-id}/carbide/site/{site-id}/identity/config` | `Forge.GetIdentityConfiguration` | Retrieve identity configuration |
 | `PUT /v2/org/{org-id}/carbide/site/{site-id}/identity/config` | `Forge.PutIdentityConfiguration` | Create or replace identity configuration |
 | `DELETE /v2/org/{org-id}/carbide/site/{site-id}/identity/config` | `Forge.DeleteIdentityConfiguration` | Delete identity configuration |
