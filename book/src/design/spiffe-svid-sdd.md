@@ -430,7 +430,7 @@ Content-Length: ...
 eyJhbGciOiJSUzI1NiIs...
 ```
 
-#### **3.5.1.2 Carbide Identity APIs***
+#### **3.5.1.2 Carbide Identity APIs**
 
 ##### **Org Identity Configuration APIs**
 
